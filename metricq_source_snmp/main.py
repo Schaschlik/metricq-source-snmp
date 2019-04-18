@@ -42,10 +42,10 @@ async def get_one(snmp_engine, host, community_string, objects):
 
     if errorIndication:
         logging.error(host, errorIndication)
-        return
+        return []
     elif errorStatus:
         logging.error(host, '{} at {}'.format(errorStatus.prettyPrint(), errorIndex))
-        return
+        return []
     else:
         ret = []
         ts = metricq.Timestamp.now()
@@ -63,28 +63,22 @@ async def get_one(snmp_engine, host, community_string, objects):
         return ret
 
 
-async def collect_periodically(work, result_queue, interval):
+async def collect_periodically(host, community_string, objects, result_queue, interval):
     snmp_engine = SnmpEngine()
     deadline = time.time() + interval
     while True:
-        get_data = []
         while deadline <= time.time():
             logging.warning('missed deadline')
             deadline += interval
         sleep_var = deadline - time.time()
         await asyncio.sleep(sleep_var)
         deadline += interval
-        for host, community_string, objects in work:
-            get_data.append(get_one(snmp_engine, (host, 161),
-                                    community_string, objects))
-
-        ret = await asyncio.gather(*get_data)
+        ret = await get_one(snmp_engine, (host, 161), community_string, objects)
 
         #print("Worker putting {} results into queue...".format(len(ret)))
         for r in ret:
             if r:
                 result_queue.put_nowait(r)
-
 
 
 async def do_work(input_queue, result_queue):
@@ -100,7 +94,8 @@ async def do_work(input_queue, result_queue):
             sorted_work[object_interval].append((host, community_string, object_data))
     work_loops = []
     for work_interval, work_data in sorted_work.items():
-        work_loops.append(collect_periodically(work_data, result_queue, work_interval))
+        for host, community_string, objects in work_data:
+            work_loops.append(collect_periodically(host, community_string, objects, result_queue, work_interval))
     await asyncio.wait(work_loops)
 
 
